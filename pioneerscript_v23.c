@@ -3,7 +3,14 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
-#include <unistd.h>
+
+#ifdef _WIN32
+    #include <windows.h>
+    #define sleep(x) Sleep((x) * 1000) // Windows Sleep is in milliseconds
+#else
+    #include <unistd.h>
+#endif
+
 #include <curl/curl.h>
 #include <openssl/sha.h>
 
