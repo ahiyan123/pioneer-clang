@@ -22,13 +22,11 @@ jobs:
 
     - name: Compile Sovereign Engine (v23) - Static
       run: |
-        # /MT: Link the C Runtime Library statically
-        # /I: Include headers from the static vcpkg folder
-        # /link: Point to the static library folder and include Windows kernel libs
         cl.exe /MT /I"${env:VCPKG_INSTALLATION_ROOT}/installed/x64-windows-static/include" `
         pioneerscript_v23.c `
         /link /LIBPATH:"${env:VCPKG_INSTALLATION_ROOT}/installed/x64-windows-static/lib" `
-        libcurl.lib libssl.lib libcrypto.lib crypt32.lib ws2_32.lib wldap32.lib advapi32.lib `
+        libcurl.lib libssl.lib libcrypto.lib `
+        ws2_32.lib crypt32.lib wldap32.lib advapi32.lib normaliz.lib `
         /out:pioneer.exe
 
     - name: Upload Sovereign Binary
