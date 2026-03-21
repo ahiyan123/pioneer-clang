@@ -17,18 +17,19 @@
 #define MAX_VARS 100
 #define STACK_SIZE 256
 #define BUF_SIZE 1024
+#define MAX_VAULTS 20
 
 // --- STRUCTURES ---
 typedef struct { char name[64]; int value; int defined; int is_temp; } Variable;
 typedef struct {
     char filename[64]; char pin[16]; char recovery_key[40];
-    int attempts; int is_hard_locked;
+    int attempts; int is_hard_locked; int active;
 } Vault;
 typedef struct { int data[STACK_SIZE]; int top; } Stack;
 
 // --- GLOBAL STATE ---
 Variable symbol_table[MAX_VARS];
-Vault secure_vault[20];
+Vault secure_vault[MAX_VAULTS];
 int var_count = 0, vault_count = 0;
 char admin_pin[16] = "";
 int admin_active = 0;
@@ -43,75 +44,65 @@ void gen_recovery(char *buf) {
     buf[32] = '\0';
 }
 
-// --- LIBCURL & OPENSSL ---
-size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) { return fwrite(ptr, size, nmemb, stream); }
-
-void get_web_file(const char *url, const char *out_name) {
-    CURL *curl = curl_easy_init();
-    if (curl) {
-        FILE *fp = fopen(out_name, "wb");
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-        if(curl_easy_perform(curl) != CURLE_OK) printf(">> [ERR] Network fail.\n");
-        fclose(fp); curl_easy_cleanup(curl);
-        printf(">> %s scouted.\n", url);
-        fflush(stdout);
-    }
-}
-
-void scan_file_identity(const char *path) {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    FILE *f = fopen(path, "rb");
-    if (!f) return;
-    SHA256_CTX sha256; SHA256_Init(&sha256);
-    char buffer[4096]; int bytesRead = 0;
-    while ((bytesRead = fread(buffer, 1, 4096, f)) != 0) SHA256_Update(&sha256, buffer, bytesRead);
-    SHA256_Final(hash, &sha256); fclose(f);
-    printf(">> IDENTITY: ");
-    for(int i=0; i<SHA256_DIGEST_LENGTH; i++) printf("%02x", hash[i]);
-    printf("\n");
-    fflush(stdout);
-}
+void interpret(char *code); // Forward declaration for recursion (run-pnr)
 
 // --- ENGINE ---
 void interpret(char *code) {
     Stack s = { .top = -1 };
     char code_copy[BUF_SIZE]; strcpy(code_copy, code);
-    char *token = strtok(code_copy, " \n\r"); // Cleaned up tokenization
+    char *token = strtok(code_copy, " \n\r");
     int st = 0;
 
     while (token != NULL) {
+        // --- 1. ADMIN & SECURITY ---
         if (strcmp(token, "sys-admin") == 0) {
             char in[16]; printf(">> PIN: "); fflush(stdout); scanf("%s", in);
-            if (strcmp(admin_pin, in) == 0) admin_active = 1;
+            if (strcmp(admin_pin, in) == 0) { admin_active = 1; printf(">> ADMIN ACTIVE\n"); }
+            else { printf(">> ACCESS DENIED\n"); }
+            fflush(stdout);
         }
-        else if (strcmp(token, "lock-f-att-t") == 0) {
+        else if (strcmp(token, "lock-f") == 0) {
             char *fn = strtok(NULL, " ");
-            if(fn) {
+            if(fn && vault_count < MAX_VAULTS) {
                 strcpy(secure_vault[vault_count].filename, fn);
-                strcpy(secure_vault[vault_count].pin, "1111");
+                strcpy(secure_vault[vault_count].pin, "1111"); // Default
                 gen_recovery(secure_vault[vault_count].recovery_key);
+                secure_vault[vault_count].active = 1;
+                printf(">> %s LOCKED. Recovery: %s\n", fn, secure_vault[vault_count].recovery_key);
                 vault_count++;
             }
+            fflush(stdout);
         }
-        else if (strcmp(token, "scan-f") == 0 || strcmp(token, "scan-w") == 0) {
-            char *path = strtok(NULL, " "); if(path) scan_file_identity(path);
-        }
+
+        // --- 2. MATH OPS ---
         else if (strcmp(token, "%") == 0) push(&s, pop(&s, &st) + pop(&s, &st));
         else if (strcmp(token, "^") == 0) { int b = pop(&s, &st); push(&s, pop(&s, &st) - b); }
         else if (strcmp(token, "x") == 0) push(&s, pop(&s, &st) * pop(&s, &st));
         else if (strcmp(token, "!") == 0) { int b = pop(&s, &st); push(&s, pop(&s, &st) / b); }
-        else if (strcmp(token, "==") == 0) push(&s, (pop(&s, &st) == pop(&s, &st)));
+        
+        // --- 3. STACK MANIPULATION (NEW) ---
+        else if (strcmp(token, "dup") == 0) { int v = pop(&s, &st); push(&s, v); push(&s, v); }
+        else if (strcmp(token, "swap") == 0) { int a = pop(&s, &st); int b = pop(&s, &st); push(&s, a); push(&s, b); }
+        else if (strcmp(token, "drop") == 0) { pop(&s, &st); }
+
+        // --- 4. VARIABLE OPS ---
         else if (strcmp(token, "ass") == 0 || strcmp(token, "tmp") == 0) {
             int is_t = (strcmp(token, "tmp") == 0);
-            char *n = strtok(NULL, " "); strtok(NULL, " ");
+            char *n = strtok(NULL, " "); strtok(NULL, " "); // skip '='
             char *v = strtok(NULL, " ");
             if(n && v) {
-                strcpy(symbol_table[var_count].name, n);
-                symbol_table[var_count].value = atoi(v);
-                symbol_table[var_count].is_temp = is_t;
-                symbol_table[var_count++].defined = 1;
+                int found = 0;
+                for(int i=0; i<var_count; i++) {
+                    if(strcmp(symbol_table[i].name, n) == 0) {
+                        symbol_table[i].value = atoi(v); found = 1; break;
+                    }
+                }
+                if(!found) {
+                    strcpy(symbol_table[var_count].name, n);
+                    symbol_table[var_count].value = atoi(v);
+                    symbol_table[var_count].is_temp = is_t;
+                    symbol_table[var_count++].defined = 1;
+                }
             }
         }
         else if (strcmp(token, "dec") == 0) {
@@ -124,40 +115,50 @@ void interpret(char *code) {
                 }
             }
         }
-        else if (strcmp(token, "help") == 0) {
-            printf(">> ass, tmp, dec, %%, ^, x, !, ==, get-wf, scan-f, sys-admin, sys, show, ign\n");
-            fflush(stdout);
+
+        // --- 5. AUTOMATION (NEW) ---
+        else if (strcmp(token, "run-pnr") == 0) {
+            char *path = strtok(NULL, " ");
+            if(path) {
+                FILE *fp = fopen(path, "r");
+                if(fp) {
+                    char line[BUF_SIZE];
+                    while(fgets(line, BUF_SIZE, fp)) interpret(line);
+                    fclose(fp);
+                }
+            }
         }
-        else if (strcmp(token, "get-wf") == 0) { char *u = strtok(NULL, " "); if(u) get_web_file(u, "out.pnr"); }
+
+        // --- 6. SYS & SHOW ---
         else if (strcmp(token, "show") == 0) {
             int val = pop(&s, &st);
             if(st == 0) printf("pioneer output: %d\n", val);
             else printf(">> [ERR] Stack empty.\n");
             fflush(stdout);
         }
-        else if (strcmp(token, "sys") == 0) { char *c = strtok(NULL, "\""); if(admin_active && c) system(c); }
-        else if (strcmp(token, "ign") == 0) return;
+        else if (strcmp(token, "help") == 0) {
+            printf(">> ass, tmp, dec, %%, ^, x, !, lock-f, dup, swap, drop, run-pnr, sys-admin, sys, show, ign\n");
+            fflush(stdout);
+        }
         else if (isdigit(token[0])) push(&s, atoi(token));
+        else if (strcmp(token, "ign") == 0) return;
 
         token = strtok(NULL, " \n\r");
     }
 }
 
 int main() {
-    curl_global_init(CURL_GLOBAL_DEFAULT); srand(time(NULL));
-    printf("PIONEERSCRIPT v24 MASTER: Pioneer doesn't know to rest.\nSet Admin PIN: ");
+    srand(time(NULL));
+    printf("PIONEERSCRIPT v25 MASTER: Pioneer doesn't know to rest.\nSet Admin PIN: ");
     fflush(stdout);
     scanf("%15s", admin_pin);
-    
-    // Clear the input buffer after scanf
-    int c; while ((c = getchar()) != '\n' && c != EOF);
+    int c; while ((c = getchar()) != '\n' && c != EOF); // Clear buffer
 
     char cmd[BUF_SIZE];
     while(1) { 
-        printf("pioneer> "); 
-        fflush(stdout);
+        printf("pioneer> "); fflush(stdout);
         if (fgets(cmd, BUF_SIZE, stdin) == NULL) break;
         interpret(cmd); 
     }
-    curl_global_cleanup(); return 0;
+    return 0;
 }
