@@ -1,0 +1,32 @@
+name: Pioneer Windows Engine Forge
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Source
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies (vcpkg)
+      run: |
+        vcpkg install curl:x64-windows openssl:x64-windows
+
+    - name: Compile Sovereign Engine (v23)
+      run: |
+        # We use the built-in MSVC compiler or GCC if available
+        # This command links the vcpkg versions of curl and ssl
+        cl.exe /I"${env:VCPKG_INSTALLATION_ROOT}/installed/x64-windows/include" `
+        pioneerscript_v23.c `
+        /link /LIBPATH:"${env:VCPKG_INSTALLATION_ROOT}/installed/x64-windows/lib" `
+        libcurl.lib libssl.lib libcrypto.lib /out:pioneer.exe
+
+    - name: Upload Windows Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: pioneer-engine-windows
+        path: pioneer.exe
