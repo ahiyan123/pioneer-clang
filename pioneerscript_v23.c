@@ -4,27 +4,37 @@
 #include <ctype.h>
 #include <math.h>
 #include <windows.h>
+#include <time.h>
 
 #define MAX_VARS 200
 #define STACK_SIZE 512
 #define BUF_SIZE 2048
 
+// --- DATA STRUCTURES ---
 typedef struct { char name[64]; int value; int defined; int is_temp; } Variable;
 typedef struct { int data[STACK_SIZE]; int top; } Stack;
 
 Variable symbol_table[MAX_VARS];
 int var_count = 0;
 
-// --- STACK ENGINE ---
+// --- CORE ENGINE ---
 void push(Stack *s, int val) { if (s->top < STACK_SIZE - 1) s->data[++(s->top)] = val; }
 int pop(Stack *s, int *err) { if (s->top < 0) { *err = 1; return 0; } *err = 0; return s->data[(s->top)--]; }
 
-// --- THE CLEANER: Removes Windows \r\n and hidden whitespace ---
 void clean_token(char *t) {
     char *p = t;
     while (*p) {
         if (*p == '\r' || *p == '\n') { *p = '\0'; break; }
         p++;
+    }
+}
+
+// --- SOVEREIGN VAULT (Bypassing OpenSSL) ---
+void vault_cipher(char *data, char *key) {
+    int data_len = strlen(data);
+    int key_len = strlen(key);
+    for(int i = 0; i < data_len; i++) {
+        data[i] = data[i] ^ key[i % key_len]; // Native XOR encryption
     }
 }
 
@@ -39,21 +49,22 @@ void interpret(char *code, Stack *s) {
 
         // --- 1. SYSTEM & HELP ---
         if (strcmp(token, "help") == 0) {
-            printf("\n--- PIONEERSCRIPT v26.4 COMMANDS ---\n");
+            printf("\n--- PIONEERSCRIPT v26.5 MASTER ---\n");
             printf("MATH:  %%(add) ^(sub) x(mul) !(div) mod **\n");
             printf("LOGIC: == > < and or not ?(ternary)\n");
             printf("STACK: dup swap drop clear show\n");
             printf("VOICE: printt(num) printts(msg) nl(newline)\n");
             printf("VAR:   ass tmp dec\n");
+            printf("VAULT: lock-f (Native XOR Secure)\n");
             printf("SYS:   time exit\n");
             fflush(stdout);
         }
         else if (strcmp(token, "exit") == 0) exit(0);
 
-        // --- 2. VOICE COMMANDS (NEW) ---
+        // --- 2. VOICE ---
         else if (strcmp(token, "printt") == 0) {
             int val = pop(s, &st);
-            if (!st) { printf("%d", val); push(s, val); } // Peek logic: Put it back
+            if (!st) { printf("%d", val); push(s, val); }
             fflush(stdout);
         }
         else if (strcmp(token, "printts") == 0) {
@@ -66,32 +77,24 @@ void interpret(char *code, Stack *s) {
             }
             fflush(stdout);
         }
-        else if (strcmp(token, "nl") == 0) {
-            printf("\n");
-            fflush(stdout);
-        }
+        else if (strcmp(token, "nl") == 0) { printf("\n"); fflush(stdout); }
 
-        // --- 3. MATH ---
+        // --- 3. MATH & LOGIC ---
         else if (strcmp(token, "%") == 0) push(s, pop(s, &st) + pop(s, &st));
         else if (strcmp(token, "^") == 0) { int b = pop(s, &st); push(s, pop(s, &st) - b); }
         else if (strcmp(token, "x") == 0) push(s, pop(s, &st) * pop(s, &st));
         else if (strcmp(token, "!") == 0) { int b = pop(s, &st); push(s, pop(s, &st) / b); }
         else if (strcmp(token, "mod") == 0) { int b = pop(s, &st); push(s, pop(s, &st) % b); }
         else if (strcmp(token, "**") == 0) { int b = pop(s, &st); push(s, (int)pow(pop(s, &st), b)); }
-
-        // --- 4. BOOLEAN & DECISION ---
         else if (strcmp(token, "==") == 0) push(s, (pop(s, &st) == pop(s, &st)));
         else if (strcmp(token, ">") == 0) { int b = pop(s, &st); push(s, (pop(s, &st) > b)); }
         else if (strcmp(token, "<") == 0) { int b = pop(s, &st); push(s, (pop(s, &st) < b)); }
-        else if (strcmp(token, "and") == 0) push(s, (pop(s, &st) && pop(s, &st)));
-        else if (strcmp(token, "or") == 0)  push(s, (pop(s, &st) || pop(s, &st)));
-        else if (strcmp(token, "not") == 0) push(s, !pop(s, &st));
         else if (strcmp(token, "?") == 0) { 
             int f = pop(s, &st); int t = pop(s, &st); int cond = pop(s, &st);
             push(s, cond ? t : f);
         }
 
-        // --- 5. STACK SURGERY ---
+        // --- 4. STACK & VARS ---
         else if (strcmp(token, "show") == 0) {
             int v = pop(s, &st);
             if (!st) printf("pioneer output: %d\n", v);
@@ -99,13 +102,9 @@ void interpret(char *code, Stack *s) {
             fflush(stdout);
         }
         else if (strcmp(token, "dup") == 0) { int v = pop(s, &st); push(s, v); push(s, v); }
-        else if (strcmp(token, "swap") == 0) { int a = pop(s, &st); int b = pop(s, &st); push(s, a); push(s, b); }
-        else if (strcmp(token, "clear") == 0) s->top = -1;
-
-        // --- 6. DATA & VARS ---
         else if (strcmp(token, "ass") == 0 || strcmp(token, "tmp") == 0) {
             int is_t = (strcmp(token, "tmp") == 0);
-            char *name = strtok(NULL, " "); strtok(NULL, " "); // skip '='
+            char *name = strtok(NULL, " "); strtok(NULL, " ");
             char *val_str = strtok(NULL, " ");
             if(name && val_str) {
                 int found = 0;
@@ -143,14 +142,9 @@ int main() {
     Stack main_stack = { .top = -1 };
     char cmd[BUF_SIZE];
 
-    printf("PIONEERSCRIPT v26.4 MASTER\n");
-    printf("Motto: Pioneer doesn't know to rest.\n");
+    printf("PIONEERSCRIPT v26.5 [STANDALONE]\n");
+    printf("Status: Sovereign | Everyone isn't same.\n");
 
     while(1) {
         printf("pioneer> ");
         fflush(stdout);
-        if (fgets(cmd, BUF_SIZE, stdin) == NULL) break;
-        interpret(cmd, &main_stack);
-    }
-    return 0;
-}
