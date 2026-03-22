@@ -2,81 +2,53 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <math.h>
-#include <windows.h>
+#include <windows.h> // Essential for Windows Terminal control
 
-#define STACK_SIZE 512
-#define BUF_SIZE 2048
+#define BUF_SIZE 1024
+#define STACK_SIZE 256
+
+// --- WINDOWS FORCED OUTPUT ---
+void init_windows_console() {
+    // Attach to the parent console if we don't have one
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+        AllocConsole();
+    }
+    // Force STDOUT to be unbuffered so "show" works immediately
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdin, NULL, _IONBF, 0);
+}
 
 typedef struct { int data[STACK_SIZE]; int top; } Stack;
+void push(Stack *s, int v) { if(s->top < STACK_SIZE-1) s->data[++s->top] = v; }
+int pop(Stack *s, int *e) { if(s->top < 0) { *e=1; return 0; } *e=0; return s->data[s->top--]; }
 
-// --- MANDATORY WINDOWS FIXES ---
-void push(Stack *s, int val) {
-    if (s->top < STACK_SIZE - 1) s->data[++(s->top)] = val;
-}
-
-int pop(Stack *s, int *err) {
-    if (s->top < 0) { *err = 1; return 0; }
-    *err = 0;
-    return s->data[(s->top)--];
-}
-
-void interpret(char *code, Stack *s) {
-    char *token = strtok(code, " \n\r");
-    int st = 0;
-
-    while (token != NULL) {
-        // Numbers
-        if (isdigit(token[0]) || (token[0] == '-' && isdigit(token[1]))) {
-            push(s, atoi(token));
+void interpret(char *input, Stack *s) {
+    char *token = strtok(input, " \n\r");
+    int err = 0;
+    while(token) {
+        if(isdigit(token[0])) push(s, atoi(token));
+        else if(strcmp(token, "%") == 0) push(s, pop(s, &err) + pop(s, &err));
+        else if(strcmp(token, "show") == 0) {
+            int v = pop(s, &err);
+            if(!err) printf("pioneer output: %d\n", v);
+            else printf(">> [ERR] Empty\n");
         }
-        // Operators
-        else if (strcmp(token, "%") == 0) push(s, pop(s, &st) + pop(s, &st));
-        else if (strcmp(token, "x") == 0) push(s, pop(s, &st) * pop(s, &st));
-        else if (strcmp(token, "show") == 0) {
-            int val = pop(s, &st);
-            if (st == 0) {
-                printf("pioneer output: %d\n", val);
-            } else {
-                printf(">> [ERR] Stack Empty\n");
-            }
-            fflush(stdout); // FORCE WINDOWS TO SHOW TEXT
-        }
-        // Add your other ops (==, >, <, ?, dup) here...
-        
         token = strtok(NULL, " \n\r");
     }
 }
 
 int main() {
-    // 1. Prepare Windows Console
-    SetConsoleTitle("PioneerScript v26 MASTER");
-    system("cls"); // Clear screen for a fresh start
-    
-    Stack main_stack = { .top = -1 };
-    char admin_pin[16];
+    init_windows_console();
+    Stack ms = {.top = -1};
     char cmd[BUF_SIZE];
 
-    printf("PIONEERSCRIPT v26\n----------------\n");
-    printf("Set Admin PIN: ");
-    fflush(stdout);
-    
-    // Use fgets for PIN to avoid leaving \n in the buffer
-    fgets(admin_pin, 16, stdin);
-    admin_pin[strcspn(admin_pin, "\n")] = 0; 
+    printf("PIONEERSCRIPT v26.1 [WINDOWS FIX]\n");
+    printf("Motto: Pioneer doesn't know to rest.\n");
 
-    printf("Engine Ready.\n");
-    fflush(stdout);
-
-    while(1) { 
+    while(1) {
         printf("pioneer> ");
-        fflush(stdout); // Essential for Windows CMD
-        
-        if (fgets(cmd, BUF_SIZE, stdin) == NULL) break;
-        if (strcmp(cmd, "exit\n") == 0) break;
-        
-        interpret(cmd, &main_stack);
-        fflush(stdout); 
+        if(!fgets(cmd, BUF_SIZE, stdin)) break;
+        interpret(cmd, &ms);
     }
     return 0;
 }
